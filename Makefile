@@ -1,0 +1,20 @@
+UNAME_M := $(shell uname -m)
+
+ifeq ($(UNAME_M),x86_64)
+    RUN_CMD = qemu-aarch64 -L /usr/aarch64-linux-gnu ./zig-out/bin/bme688_sensor
+else ifeq ($(UNAME_M),aarch64)
+    RUN_CMD = ./zig-out/bin/bme688_sensor
+else
+    $(error Unsupported arch: $(UNAME_M))
+endif
+
+.PHONY: build run clean
+
+build:
+	@zig build
+
+run: build
+	@$(RUN_CMD)
+
+clean:
+	@rm -rf zig-out .zig-cache

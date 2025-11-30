@@ -18,12 +18,13 @@ pub fn main() !void {
     var bsec_inst = try bsec.Bsec.init(allocator);
     defer bsec_inst.deinit();
 
-    var shared = server.SharedState{};
-    const http_thread = try server.start(allocator, &shared);
-    http_thread.detach();
-
     const ver = try bsec_inst.getVersion();
     std.debug.print("BSEC {}.{}.{}.{}\n", .{ ver.major, ver.minor, ver.major_bugfix, ver.minor_bugfix });
+
+    var shared = server.SharedState{};
+    shared.version = ver;
+    const http_thread = try server.start(allocator, &shared);
+    http_thread.detach();
 
     try bsec_inst.setConfiguration(&bsec_config);
 

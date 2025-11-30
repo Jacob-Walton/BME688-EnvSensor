@@ -1,0 +1,128 @@
+:root {
+    --bg: #0a0a0a;
+    --muted: #525252;
+    --border: #1a1a1a;
+    --text: #e5e5e5;
+    --text-strong: #fafafa;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --sans: "SF Pro Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    padding: 72px 28px 48px;
+    display: flex;
+    justify-content: center;
+    font-family: var(--sans);
+}
+
+.shell {
+    width: min(520px, 100%);
+}
+
+header {
+    margin-bottom: 64px;
+}
+
+header h1 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: #737373;
+    letter-spacing: 0.01em;
+}
+
+.section-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    margin-bottom: 12px;
+}
+
+.hero {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 64px;
+}
+
+.iaq-value {
+    font-family: var(--mono);
+    font-size: clamp(64px, 20vw, 96px);
+    font-weight: 300;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: var(--text-strong);
+}
+
+.iaq-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.iaq-label {
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.iaq-accuracy {
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 32px 36px;
+}
+
+.metric-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    margin-bottom: 10px;
+}
+
+.metric-value {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.metric-value .number {
+    font-family: var(--mono);
+    font-size: 32px;
+    font-weight: 400;
+    color: var(--text);
+    letter-spacing: -0.02em;
+}
+
+.metric-value .unit {
+    font-size: 14px;
+    color: var(--muted);
+}
+
+footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: #404040;
+}
+
+.error {
+    margin-top: 12px;
+    color: #f87171;
+    font-size: 12px;
+}

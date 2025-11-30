@@ -1,5 +1,6 @@
 const std = @import("std");
 const httpz = @import("httpz");
+const Version = @import("bsec.zig").Version;
 
 pub const Metrics = struct {
     timestamp_ns: i64 = 0,
@@ -16,6 +17,7 @@ pub const Metrics = struct {
 pub const SharedState = struct {
     mutex: std.Thread.Mutex = .{},
     value: Metrics = .{},
+    version: Version = .{ .major = 0, .minor = 0, .major_bugfix = 0, .minor_bugfix = 0 },
 
     pub fn set(self: *SharedState, metrics: Metrics) void {
         self.mutex.lock();
@@ -49,6 +51,7 @@ fn runServer(allocator: std.mem.Allocator, shared: *SharedState) !void {
 
     var router = try server.router(.{});
     router.get("/api/metrics", handleMetrics, .{});
+    router.get("/*", handleStatic, .{});
 
     std.debug.print("HTTP server listening on port 12000\n", .{});
     try server.listen();
@@ -66,5 +69,70 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
         .temperature_c = metrics.temperature_c,
         .humidity_pct = metrics.humidity_pct,
         .pressure_hpa = metrics.pressure_hpa,
+        .bsec_version = .{
+            .major = shared.version.major,
+            .minor = shared.version.minor,
+            .major_bugfix = shared.version.major_bugfix,
+            .minor_bugfix = shared.version.minor_bugfix,
+        },
     }, .{});
+}
+
+fn handleStatic(_: *SharedState, req: *httpz.Request, res: *httpz.Response) !void {
+    const path = req.url.path;
+
+    // Prevent directory traversal
+    if (std.mem.indexOf(u8, path, "..") != null) {
+        res.status = 403;
+        res.body = "Forbidden";
+        return;
+    }
+
+    // Determine file path
+    const file_path = if (std.mem.eql(u8, path, "/"))
+        "public/index.html"
+    else
+        try std.fmt.allocPrint(res.arena, "public{s}", .{path});
+
+    // Try to open and read the file
+    const file = std.fs.cwd().openFile(file_path, .{}) catch {
+        res.status = 404;
+        res.body = "Not Found";
+        return;
+    };
+    defer file.close();
+
+    const stat = try file.stat();
+    const content = try res.arena.alloc(u8, stat.size);
+    const bytes_read = try file.readAll(content);
+
+    res.content_type = contentType(file_path);
+    res.body = content[0..bytes_read];
+}
+
+fn contentType(path: []const u8) httpz.ContentType {
+    const ext = std.fs.path.extension(path);
+    if (std.mem.eql(u8, ext, ".html") or std.mem.eql(u8, ext, ".htm")) return .HTML;
+    if (std.mem.eql(u8, ext, ".css")) return .CSS;
+    if (std.mem.eql(u8, ext, ".js")) return .JS;
+    if (std.mem.eql(u8, ext, ".json")) return .JSON;
+    if (std.mem.eql(u8, ext, ".png")) return .PNG;
+    if (std.mem.eql(u8, ext, ".jpg") or std.mem.eql(u8, ext, ".jpeg")) return .JPG;
+    if (std.mem.eql(u8, ext, ".gif")) return .GIF;
+    if (std.mem.eql(u8, ext, ".svg")) return .SVG;
+    if (std.mem.eql(u8, ext, ".ico")) return .ICO;
+    if (std.mem.eql(u8, ext, ".xml")) return .XML;
+    if (std.mem.eql(u8, ext, ".txt")) return .TEXT;
+    if (std.mem.eql(u8, ext, ".woff")) return .WOFF;
+    if (std.mem.eql(u8, ext, ".woff2")) return .WOFF2;
+    if (std.mem.eql(u8, ext, ".csv")) return .CSV;
+    if (std.mem.eql(u8, ext, ".pdf")) return .PDF;
+    if (std.mem.eql(u8, ext, ".webp")) return .WEBP;
+    if (std.mem.eql(u8, ext, ".wasm")) return .WASM;
+    if (std.mem.eql(u8, ext, ".ttf")) return .TTF;
+    if (std.mem.eql(u8, ext, ".otf")) return .OTF;
+    if (std.mem.eql(u8, ext, ".eot")) return .EOT;
+    if (std.mem.eql(u8, ext, ".gz")) return .GZ;
+    if (std.mem.eql(u8, ext, ".tar")) return .TAR;
+    return .BINARY;
 }

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Environment</title>
+    <link href="styles.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="shell">
+        <header>
+            <h1>Environment</h1>
+        </header>
+
+        <div class="section-title">Air Quality Index</div>
+        <section class="hero">
+            <div id="iaq-value" class="iaq-value">--</div>
+            <div class="iaq-meta">
+                <div id="iaq-label" class="iaq-label">Loading</div>
+                <div id="iaq-accuracy" class="iaq-accuracy">waiting for sensor</div>
+            </div>
+        </section>
+
+        <section class="grid">
+            <div>
+                <div class="metric-label">Temperature</div>
+                <div class="metric-value"><span id="temp" class="number">--</span><span class="unit">°C</span></div>
+            </div>
+            <div>
+                <div class="metric-label">Humidity</div>
+                <div class="metric-value"><span id="humidity" class="number">--</span><span class="unit">%</span></div>
+            </div>
+            <div>
+                <div class="metric-label">CO₂ equivalent</div>
+                <div class="metric-value"><span id="co2" class="number">--</span><span class="unit">ppm</span></div>
+            </div>
+            <div>
+                <div class="metric-label">VOC</div>
+                <div class="metric-value"><span id="voc" class="number">--</span><span class="unit">ppm</span></div>
+            </div>
+            <div>
+                <div class="metric-label">Pressure</div>
+                <div class="metric-value"><span id="pressure" class="number">--</span><span class="unit">hPa</span>
+                </div>
+            </div>
+        </section>
+
+        <div id="error" class="error" aria-live="polite"></div>
+
+        <footer>
+            <span>BSEC <span id="bsec-version">x.x.x.x</span></span>
+        </footer>
+    </div>
+    <script src="./app.js"></script>
+</body>
+
+</html>

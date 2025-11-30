@@ -1,0 +1,3 @@
+[submodule "lib/bme68x"]
+	path = lib/bme68x
+	url = https://github.com/boschsensortec/BME68x_SensorAPI

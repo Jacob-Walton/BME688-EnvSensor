@@ -65,6 +65,8 @@ pub fn main() !void {
 
             const data = sensor.measure() catch continue;
 
+            if ((data.heat_stable == false) or (data.gas_valid == false)) continue;
+
             const outputs = bsec_inst.doSteps(
                 timestamp_ns,
                 if (settings.shouldProcess(.temperature)) data.temperature else null,

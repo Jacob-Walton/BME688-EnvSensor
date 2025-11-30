@@ -2,60 +2,10 @@ const std = @import("std");
 const Bme68x = @import("bme68x.zig").Bme68x;
 const bsec = @import("bsec.zig");
 const bsec_config = @import("config.zig").bsec_config;
+const server = @import("server.zig");
 
 const STATE_FILE = "/var/lib/bsec_state.bin";
-const SAVE_INTERVAL_NS = 5 * 60 * std.time.ns_per_s; // Save every 5 mins
-
-const Metrics = struct {
-    timestamp_ns: i64 = 0,
-    iaq: f32 = 0,
-    iaq_accuracy: u8 = 0,
-    accuracy_label: []const u8 = "stabilizing",
-    co2_ppm: f32 = 0,
-    voc_ppm: f32 = 0,
-    temperature_c: f32 = 0,
-    humidity_pct: f32 = 0,
-    pressure_hpa: f32 = 0,
-
-    const Self = @This();
-
-    pub fn toJson(self: Self, buf: []u8) ![]const u8 {
-        var writer: std.io.Writer = .fixed(buf);
-        var stringifier: std.json.Stringify = .{
-            .writer = &writer,
-            .options = .{},
-        };
-        try stringifier.write(self);
-        return writer.buffered();
-    }
-
-    pub fn toJsonPretty(self: Self, buf: []u8) ![]const u8 {
-        var writer: std.io.Writer = .fixed(buf);
-        var stringifier: std.json.Stringify = .{
-            .writer = &writer,
-            .options = .{ .whitespace = .indent_2 },
-        };
-        try stringifier.write(self);
-        return writer.buffered();
-    }
-};
-
-const SharedState = struct {
-    mutex: std.Thread.Mutex = .{},
-    value: Metrics = .{},
-
-    fn set(self: *SharedState, metrics: Metrics) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        self.value = metrics;
-    }
-
-    fn get(self: *SharedState) Metrics {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        return self.value;
-    }
-};
+const SAVE_INTERVAL_NS = 5 * 60 * std.time.ns_per_s;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -68,8 +18,8 @@ pub fn main() !void {
     var bsec_inst = try bsec.Bsec.init(allocator);
     defer bsec_inst.deinit();
 
-    var shared = SharedState{};
-    const http_thread = try startHttpServer(allocator, &shared);
+    var shared = server.SharedState{};
+    const http_thread = try server.start(allocator, &shared);
     http_thread.detach();
 
     const ver = try bsec_inst.getVersion();
@@ -77,7 +27,6 @@ pub fn main() !void {
 
     try bsec_inst.setConfiguration(&bsec_config);
 
-    // Load saved state if it exists
     if (loadState(&bsec_inst)) {
         std.debug.print("Loaded saved state\n", .{});
     } else {
@@ -173,13 +122,13 @@ fn printOutputs(outputs: []bsec.SensorOutput) void {
     });
 }
 
-fn updateSharedMetrics(outputs: []bsec.SensorOutput, timestamp_ns: i128, shared: *SharedState) void {
+fn updateSharedMetrics(outputs: []bsec.SensorOutput, timestamp_ns: i128, shared: *server.SharedState) void {
     var data = gatherMetrics(outputs);
-    data.timestamp_ns = @as(i64, @intCast(timestamp_ns));
+    data.timestamp_ns = @intCast(timestamp_ns);
     shared.set(data);
 }
 
-fn gatherMetrics(outputs: []bsec.SensorOutput) Metrics {
+fn gatherMetrics(outputs: []bsec.SensorOutput) server.Metrics {
     var iaq: ?f32 = null;
     var iaq_acc: u8 = 0;
     var co2: ?f32 = null;
@@ -203,12 +152,10 @@ fn gatherMetrics(outputs: []bsec.SensorOutput) Metrics {
         }
     }
 
-    const accuracy_str = accuracyLabel(iaq_acc);
-
     return .{
         .iaq = iaq orelse 0,
         .iaq_accuracy = iaq_acc,
-        .accuracy_label = accuracy_str,
+        .accuracy_label = accuracyLabel(iaq_acc),
         .co2_ppm = co2 orelse 0,
         .voc_ppm = voc orelse 0,
         .temperature_c = temp orelse 0,
@@ -225,62 +172,4 @@ fn accuracyLabel(accuracy: u8) []const u8 {
         3 => "high",
         else => "?",
     };
-}
-
-fn startHttpServer(allocator: std.mem.Allocator, shared: *SharedState) !std.Thread {
-    return std.Thread.spawn(.{}, httpLoop, .{ allocator, shared });
-}
-
-fn httpLoop(allocator: std.mem.Allocator, shared: *SharedState) !void {
-    _ = allocator; // Future use
-
-    const address = try std.net.Address.parseIp("0.0.0.0", 12000);
-    var server = try std.net.Address.listen(address, .{ .reuse_address = true });
-    defer server.deinit();
-
-    while (true) {
-        const conn = server.accept() catch continue;
-        var stream = conn.stream;
-        handleConnection(&stream, shared) catch {};
-        stream.close();
-    }
-}
-
-fn handleConnection(stream: *std.net.Stream, shared: *SharedState) !void {
-    var buf: [2048]u8 = undefined;
-    const n = try stream.read(&buf);
-    if (n == 0) return;
-
-    const req = buf[0..n];
-    const first_line_end = std.mem.indexOf(u8, req, "\r\n") orelse return;
-    const first_line = req[0..first_line_end];
-    if (!std.mem.startsWith(u8, first_line, "GET ")) {
-        try respond(stream, "405 Method Not Allowed", "text/plain", "method not allowed");
-        return;
-    }
-
-    const after_method = first_line[4..];
-    const space_idx = std.mem.indexOfScalar(u8, after_method, ' ') orelse return;
-    const target = after_method[0..space_idx];
-
-    if (std.mem.eql(u8, target, "/api/metrics")) {
-        const metrics = shared.get();
-        var json_buf: [512]u8 = undefined;
-        const body = try metrics.toJson(&json_buf);
-
-        try respond(stream, "200 OK", "application/json", body);
-    } else {
-        try respond(stream, "404 Not Found", "text/plain", "not found");
-    }
-}
-
-fn respond(stream: *std.net.Stream, status: []const u8, content_type: []const u8, body: []const u8) !void {
-    var header_buf: [256]u8 = undefined;
-    const header = try std.fmt.bufPrint(
-        &header_buf,
-        "HTTP/1.1 {s}\r\nContent-Type: {s}\r\nCache-Control: no-store\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n",
-        .{ status, content_type, body.len },
-    );
-    try stream.writeAll(header);
-    try stream.writeAll(body);
 }

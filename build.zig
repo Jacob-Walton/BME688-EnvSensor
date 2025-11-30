@@ -5,11 +5,14 @@ pub fn build(b: *std.Build) void {
     const target = b.resolveTargetQuery(.{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .gnu });
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{ .name = "bme688_sensor", .root_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+    const httpz = b.dependency("httpz", .{
         .target = target,
         .optimize = optimize,
-    }) });
+    });
+
+    const exe = b.addExecutable(.{ .name = "bme688_sensor", .root_module = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize, .imports = &.{
+        .{ .name = "httpz", .module = httpz.module("httpz") },
+    } }) });
 
     // BSEC headers
     exe.addIncludePath(b.path("lib/bsec"));

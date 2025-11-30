@@ -126,3 +126,104 @@ footer {
     color: #f87171;
     font-size: 12px;
 }
+
+/* Tablet */
+@media (max-width: 768px) {
+    body {
+        padding: 48px 24px 36px;
+    }
+
+    header {
+        margin-bottom: 48px;
+    }
+
+    .hero {
+        margin-bottom: 48px;
+    }
+
+    .grid {
+        gap: 24px 28px;
+    }
+
+    .metric-value .number {
+        font-size: 28px;
+    }
+}
+
+/* Mobile */
+@media (max-width: 480px) {
+    body {
+        padding: 32px 16px 28px;
+    }
+
+    header {
+        margin-bottom: 32px;
+    }
+
+    .hero {
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 40px;
+    }
+
+    .iaq-value {
+        font-size: 56px;
+    }
+
+    .iaq-meta {
+        gap: 4px;
+    }
+
+    .iaq-label {
+        font-size: 14px;
+    }
+
+    .iaq-accuracy {
+        font-size: 12px;
+    }
+
+    .grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px 16px;
+    }
+
+    .metric-label {
+        font-size: 11px;
+        margin-bottom: 6px;
+    }
+
+    .metric-value .number {
+        font-size: 24px;
+    }
+
+    .metric-value .unit {
+        font-size: 12px;
+    }
+
+    footer {
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 32px;
+        padding-top: 16px;
+    }
+}
+
+/* Small mobile */
+@media (max-width: 360px) {
+    body {
+        padding: 24px 12px 24px;
+    }
+
+    .iaq-value {
+        font-size: 48px;
+    }
+
+    .grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 16px 12px;
+    }
+
+    .metric-value .number {
+        font-size: 22px;
+    }
+}

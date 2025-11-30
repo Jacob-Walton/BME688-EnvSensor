@@ -1,0 +1,16 @@
+services:
+  sensor:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    devices:
+      - /dev/i2c-1:/dev/i2c-1
+    volumes:
+      - bsec_state:/var/lib
+    ports:
+      - "9012:12000"
+    restart: unless-stopped
+
+volumes:
+  bsec_state:
+    driver: local

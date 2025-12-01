@@ -12,6 +12,7 @@ pub const Metrics = struct {
     temperature_c: f32 = 0,
     humidity_pct: f32 = 0,
     pressure_hpa: f32 = 0,
+    raw_pressure_hpa: f32 = 0,
 };
 
 pub const SharedState = struct {

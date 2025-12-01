@@ -67,6 +67,8 @@ pub fn main() !void {
 
             if ((data.heat_stable == false) or (data.gas_valid == false)) continue;
 
+            const raw_pressure_hpa = data.pressure / 100.0;
+
             const outputs = bsec_inst.doSteps(
                 timestamp_ns,
                 if (settings.shouldProcess(.temperature)) data.temperature else null,
@@ -77,7 +79,7 @@ pub fn main() !void {
             ) catch continue;
 
             printOutputs(outputs);
-            updateSharedMetrics(outputs, timestamp_ns, &shared);
+            updateSharedMetrics(outputs, timestamp_ns, &shared, raw_pressure_hpa);
 
             if (timestamp_ns - last_save > SAVE_INTERVAL_NS) {
                 saveState(&bsec_inst);
@@ -122,16 +124,17 @@ fn printOutputs(outputs: []bsec.SensorOutput) void {
         data.accuracy_label,
         data.co2_ppm,
         data.voc_ppm,
+        data.raw_pressure_hpa,
     });
 }
 
-fn updateSharedMetrics(outputs: []bsec.SensorOutput, timestamp_ns: i128, shared: *server.SharedState) void {
-    var data = gatherMetrics(outputs);
+fn updateSharedMetrics(outputs: []bsec.SensorOutput, timestamp_ns: i128, shared: *server.SharedState, raw_pressure_hpa: ?f32) void {
+    var data = gatherMetrics(outputs, raw_pressure_hpa);
     data.timestamp_ns = @intCast(timestamp_ns);
     shared.set(data);
 }
 
-fn gatherMetrics(outputs: []bsec.SensorOutput) server.Metrics {
+fn gatherMetrics(outputs: []bsec.SensorOutput, raw_pressure_hpa: ?f32) server.Metrics {
     var iaq: ?f32 = null;
     var iaq_acc: u8 = 0;
     var co2: ?f32 = null;
@@ -164,6 +167,7 @@ fn gatherMetrics(outputs: []bsec.SensorOutput) server.Metrics {
         .temperature_c = temp orelse 0,
         .humidity_pct = hum orelse 0,
         .pressure_hpa = if (pres) |p| p / 100.0 else 0,
+        .raw_pressure_hpa = raw_pressure_hpa orelse 0,
     };
 }
 

@@ -71,6 +71,7 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
         .humidity_pct = metrics.humidity_pct,
         .pressure_hpa = metrics.pressure_hpa,
         .raw_pressure_hpa = metrics.raw_pressure_hpa,
+        .relative_altitude = relativeAltitude(metrics.pressure_hpa) catch 0,
         .bsec_version = .{
             .major = shared.version.major,
             .minor = shared.version.minor,
@@ -160,4 +161,101 @@ fn contentType(path: []const u8) httpz.ContentType {
     if (std.mem.eql(u8, ext, ".webp")) return .WEBP;
 
     return .BINARY;
+}
+
+fn get_altitude(measured: f64, qnh: f64) f64 {
+    const ratio = measured / qnh;
+    return 44330.0 * (1.0 - std.math.pow(f64, ratio, 0.190284));
+}
+
+const Altimeter = struct {
+    value: f64,
+};
+
+const Metar = struct {
+    altimeter: Altimeter,
+};
+
+fn get_api_key_from_env(allocator: std.mem.Allocator) !struct { icao: []const u8, api_key: []const u8 } {
+    var file = try std.fs.cwd().openFile(".env", .{});
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(content);
+
+    var api_key: ?[]const u8 = null;
+    var icao: ?[]const u8 = null;
+
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \r\t");
+        if (trimmed.len == 0 or trimmed[0] == '#') continue;
+
+        if (std.mem.indexOf(u8, trimmed, "API_KEY=")) |_| {
+            const key_start = std.mem.indexOf(u8, trimmed, "=").? + 1;
+            api_key = try allocator.dupe(u8, trimmed[key_start..]);
+        } else if (std.mem.indexOf(u8, trimmed, "ICAO=")) |_| {
+            const key_start = std.mem.indexOf(u8, trimmed, "=").? + 1;
+            icao = try allocator.dupe(u8, trimmed[key_start..]);
+        }
+    }
+
+    if (api_key == null) return error.MissingApiKey;
+    if (icao == null) return error.MissingIcao;
+
+    return .{ .icao = icao.?, .api_key = api_key.? };
+}
+
+fn relativeAltitude(pressure_hpa: f32) !f32 {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const env = try get_api_key_from_env(allocator);
+    defer allocator.free(env.api_key);
+    defer allocator.free(env.icao);
+
+    var client: std.http.Client = .{ .allocator = allocator };
+    defer client.deinit();
+
+    var redirect_buffer: [8192]u8 = undefined;
+
+    var body: std.Io.Writer.Allocating = .init(allocator);
+    defer body.deinit();
+
+    const bearer = try std.fmt.allocPrint(allocator, "Bearer {s}", .{env.api_key});
+    defer allocator.free(bearer);
+
+    const url = try std.fmt.allocPrint(allocator, "https://metar.konpeki.co.uk/api/metar/{s}", .{env.icao});
+    defer allocator.free(url);
+
+    const result = try client.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .redirect_buffer = &redirect_buffer,
+        .response_writer = &body.writer,
+        .headers = .{
+            .authorization = .{ .override = bearer },
+        },
+    });
+
+    if (result.status != .ok) {
+        std.debug.print("Request failed with status: {}\n", .{result.status});
+        return error.ApiRequestFailed;
+    }
+
+    const response_body = try body.toOwnedSlice();
+    defer allocator.free(response_body);
+
+    // Parse the returned Json into a Metar struct
+    const parsed = try std.json.parseFromSlice(Metar, allocator, response_body, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    const qnh = parsed.value.altimeter.value;
+    const altitude = get_altitude(pressure_hpa, qnh);
+    const altitude_ft = altitude * 3.28084;
+
+    return @as(f32, @floatCast(altitude_ft));
 }

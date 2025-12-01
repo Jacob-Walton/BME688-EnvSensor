@@ -2,3 +2,4 @@
 zig-out/
 /bsec/
 lib/libalgobsec.a
+.env

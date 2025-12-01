@@ -20,6 +20,7 @@ pub const SharedState = struct {
     mutex: std.Thread.Mutex = .{},
     value: Metrics = .{},
     version: Version = .{ .major = 0, .minor = 0, .major_bugfix = 0, .minor_bugfix = 0 },
+    logger: ?*logger.Logger = null,
 
     pub fn set(self: *SharedState, metrics: Metrics) void {
         self.mutex.lock();
@@ -65,6 +66,13 @@ fn runServer(allocator: std.mem.Allocator, shared: *SharedState) !void {
 
 fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) !void {
     const metrics = shared.get();
+    const altitude = relativeAltitude(metrics.pressure_hpa, shared.logger) catch |err| blk: {
+        if (shared.logger) |log| {
+            log.warn("Failed to get relative altitude: {}", .{err});
+        }
+        break :blk 0;
+    };
+
     try res.json(.{
         .timestamp_ns = metrics.timestamp_ns,
         .iaq = metrics.iaq,
@@ -76,6 +84,7 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
         .humidity_pct = metrics.humidity_pct,
         .pressure_hpa = metrics.pressure_hpa,
         .raw_pressure_hpa = metrics.raw_pressure_hpa,
+        .relative_altitude = altitude,
         .bsec_version = .{
             .major = shared.version.major,
             .minor = shared.version.minor,
@@ -87,7 +96,12 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
 
 fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) !void {
     const metrics = shared.get();
-    const altitude = relativeAltitude(metrics.pressure_hpa) catch 0;
+    const altitude = relativeAltitude(metrics.pressure_hpa, shared.logger) catch |err| blk: {
+        if (shared.logger) |log| {
+            log.warn("Failed to get relative altitude: {}", .{err});
+        }
+        break :blk 0;
+    };
     try res.json(.{
         .relative_altitude = altitude,
     }, .{});
@@ -218,17 +232,14 @@ fn get_api_key_from_env(allocator: std.mem.Allocator) !struct { icao: []const u8
     return .{ .icao = icao.?, .api_key = api_key.? };
 }
 
-fn relativeAltitude(pressure_hpa: f32) !f32 {
+fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !f32 {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const log = logger.Logger.init(allocator, "/var/log/bme688_sensor.log") catch return 0;
-    defer log.deinit();
-
     const env = get_api_key_from_env(allocator) catch |err| {
-        log.err("Failed to get API key from env: {}", .{err});
-        return error.MissingApiKey;
+        if (log) |l| l.err("Failed to get API key from env: {}", .{err});
+        return err;
     };
     defer allocator.free(env.api_key);
     defer allocator.free(env.icao);
@@ -256,13 +267,12 @@ fn relativeAltitude(pressure_hpa: f32) !f32 {
             .authorization = .{ .override = bearer },
         },
     }) catch |err| {
-        log.err("METAR API request failed: {}", .{err});
+        if (log) |l| l.err("METAR API request failed: {}", .{err});
         return err;
     };
 
     if (result.status != .ok) {
-        log.err("METAR API returned status: {}", .{result.status});
-        std.debug.print("Request failed with status: {}\n", .{result.status});
+        if (log) |l| l.err("METAR API returned status: {}", .{result.status});
         return error.ApiRequestFailed;
     }
 
@@ -273,7 +283,7 @@ fn relativeAltitude(pressure_hpa: f32) !f32 {
     const parsed = std.json.parseFromSlice(Metar, allocator, response_body, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
-        log.err("Failed to parse METAR response: {}", .{err});
+        if (log) |l| l.err("Failed to parse METAR response: {}", .{err});
         return err;
     };
     defer parsed.deinit();

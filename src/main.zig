@@ -31,7 +31,9 @@ pub fn main() !void {
     global_logger.info("BSEC {}.{}.{}.{}", .{ ver.major, ver.minor, ver.major_bugfix, ver.minor_bugfix });
     std.debug.print("BSEC {}.{}.{}.{}\n", .{ ver.major, ver.minor, ver.major_bugfix, ver.minor_bugfix });
 
-    var shared = server.SharedState{};
+    var shared = server.SharedState{
+        .logger = global_logger,
+    };
     shared.version = ver;
     const http_thread = try server.start(allocator, &shared);
     http_thread.detach();

@@ -110,6 +110,13 @@ header h1 {
     color: var(--muted);
 }
 
+.metric-meta {
+    font-size: 10px;
+    color: #404040;
+    margin-top: 4px;
+    font-family: var(--mono);
+}
+
 footer {
     margin-top: 48px;
     padding-top: 20px;

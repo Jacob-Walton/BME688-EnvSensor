@@ -21,6 +21,12 @@ async function fetchMetrics() {
   return res.json();
 }
 
+async function fetchAltitude() {
+  const res = await fetch('/api/altitude', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  return res.json();
+}
+
 function render(metrics) {
   const iaqStatus = getIAQStatus(metrics.iaq || 0);
   setText('iaq-value', Math.round(metrics.iaq || 0));
@@ -37,11 +43,46 @@ function render(metrics) {
   setText('bsec-version', `${metrics.bsec_version.major}.${metrics.bsec_version.minor}.${metrics.bsec_version.major_bugfix}.${metrics.bsec_version.minor_bugfix}`);
 }
 
+function renderAltitude(data) {
+  if (data.error_message) {
+    setText('altitude', '--');
+    setText('altitude-meta', 'unavailable');
+    return;
+  }
+
+  setText('altitude', Math.round(data.relative_altitude || 0));
+  
+  if (data.icao && data.observation_time && data.updated_at) {
+    const obsDate = new Date(data.observation_time);
+    const updDate = new Date(data.updated_at);
+    
+    const obsTime = obsDate.toLocaleTimeString('en-GB', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      timeZone: 'UTC'
+    });
+    
+    const updTime = updDate.toLocaleTimeString('en-GB', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      timeZone: 'UTC'
+    });
+    
+    setText('altitude-meta', `${data.icao} obs ${obsTime}Z • upd ${updTime}Z`);
+  } else {
+    setText('altitude-meta', '');
+  }
+}
+
 async function tick() {
   const error = document.getElementById('error');
   try {
-    const data = await fetchMetrics();
-    render(data);
+    const [metrics, altitude] = await Promise.all([
+      fetchMetrics(),
+      fetchAltitude()
+    ]);
+    render(metrics);
+    renderAltitude(altitude);
     error.textContent = '';
   } catch (err) {
     error.textContent = `Unable to reach sensor API: ${err.message}`;

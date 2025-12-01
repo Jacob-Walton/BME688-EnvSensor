@@ -3,6 +3,16 @@ const httpz = @import("httpz");
 const Version = @import("bsec.zig").Version;
 const logger = @import("logger.zig");
 
+var last_altitude: f32 = -1.0;
+var last_altitude_timestamp_ns: i128 = 0;
+var next_altitude_update_ns: i128 = 0;
+var last_icao: [8]u8 = undefined;
+var last_icao_len: usize = 0;
+var last_metar_timestamp: [64]u8 = undefined;
+var last_metar_timestamp_len: usize = 0;
+var last_metar_observation_time: [64]u8 = undefined;
+var last_metar_observation_time_len: usize = 0;
+
 pub const Metrics = struct {
     timestamp_ns: i64 = 0,
     iaq: f32 = 0,
@@ -86,9 +96,48 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
     }, .{});
 }
 
+const Altimeter = struct {
+    value: f64,
+};
+
+const MetaInfo = struct {
+    timestamp: []const u8,
+};
+
+const TimeInfo = struct {
+    dt: []const u8,
+};
+
+const Metar = struct {
+    altimeter: Altimeter,
+    station: []const u8,
+    meta: MetaInfo,
+    time: TimeInfo,
+};
+
+const AltitudeResult = struct {
+    altitude_ft: f32,
+    icao: [8]u8,
+    icao_len: usize,
+    timestamp: [64]u8,
+    timestamp_len: usize,
+    observation_time: [64]u8,
+    observation_time_len: usize,
+};
+
 fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) !void {
+    if (last_altitude != -1.0 and std.time.nanoTimestamp() < next_altitude_update_ns) {
+        try res.json(.{
+            .relative_altitude = last_altitude,
+            .icao = last_icao[0..last_icao_len],
+            .updated_at = last_metar_timestamp[0..last_metar_timestamp_len],
+            .observation_time = last_metar_observation_time[0..last_metar_observation_time_len],
+        }, .{});
+        return;
+    }
+
     const metrics = shared.get();
-    const altitude = relativeAltitude(metrics.pressure_hpa, shared.logger) catch |altitude_err| {
+    const result = relativeAltitude(metrics.pressure_hpa, shared.logger) catch |altitude_err| {
         if (shared.logger) |log| {
             log.err("Failed to get relative altitude: {}", .{altitude_err});
         }
@@ -99,8 +148,23 @@ fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.R
         return;
     };
 
+    last_altitude = result.altitude_ft;
+    last_altitude_timestamp_ns = std.time.nanoTimestamp();
+    next_altitude_update_ns = last_altitude_timestamp_ns + 10_000_000_000; // 10 seconds
+
+    // Copy from result to static buffers
+    @memcpy(last_icao[0..result.icao_len], result.icao[0..result.icao_len]);
+    last_icao_len = result.icao_len;
+    @memcpy(last_metar_timestamp[0..result.timestamp_len], result.timestamp[0..result.timestamp_len]);
+    last_metar_timestamp_len = result.timestamp_len;
+    @memcpy(last_metar_observation_time[0..result.observation_time_len], result.observation_time[0..result.observation_time_len]);
+    last_metar_observation_time_len = result.observation_time_len;
+
     try res.json(.{
-        .relative_altitude = altitude,
+        .relative_altitude = result.altitude_ft,
+        .icao = last_icao[0..last_icao_len],
+        .updated_at = last_metar_timestamp[0..last_metar_timestamp_len],
+        .observation_time = last_metar_observation_time[0..last_metar_observation_time_len],
     }, .{});
 }
 
@@ -191,14 +255,6 @@ fn get_altitude(measured: f64, qnh: f64) f64 {
     return 44330.0 * (1.0 - std.math.pow(f64, ratio, 0.190284));
 }
 
-const Altimeter = struct {
-    value: f64,
-};
-
-const Metar = struct {
-    altimeter: Altimeter,
-};
-
 fn get_api_key_from_env(allocator: std.mem.Allocator) !struct { icao: []const u8, api_key: []const u8 } {
     var file = try std.fs.cwd().openFile(".env", .{});
     defer file.close();
@@ -229,7 +285,7 @@ fn get_api_key_from_env(allocator: std.mem.Allocator) !struct { icao: []const u8
     return .{ .icao = icao.?, .api_key = api_key.? };
 }
 
-fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !f32 {
+fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !AltitudeResult {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -288,5 +344,26 @@ fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !f32 {
     const altitude = get_altitude(pressure_hpa, qnh);
     const altitude_ft = altitude * 3.28084;
 
-    return @as(f32, @floatCast(altitude_ft));
+    // Copy strings to stack buffers before parsed.deinit()
+    var icao_buf: [8]u8 = undefined;
+    var timestamp_buf: [64]u8 = undefined;
+    var observation_time_buf: [64]u8 = undefined;
+
+    const icao_len = @min(parsed.value.station.len, icao_buf.len);
+    const timestamp_len = @min(parsed.value.meta.timestamp.len, timestamp_buf.len);
+    const observation_time_len = @min(parsed.value.time.dt.len, observation_time_buf.len);
+
+    @memcpy(icao_buf[0..icao_len], parsed.value.station[0..icao_len]);
+    @memcpy(timestamp_buf[0..timestamp_len], parsed.value.meta.timestamp[0..timestamp_len]);
+    @memcpy(observation_time_buf[0..observation_time_len], parsed.value.time.dt[0..observation_time_len]);
+
+    return .{
+        .altitude_ft = @as(f32, @floatCast(altitude_ft)),
+        .icao = icao_buf,
+        .icao_len = icao_len,
+        .timestamp = timestamp_buf,
+        .timestamp_len = timestamp_len,
+        .observation_time = observation_time_buf,
+        .observation_time_len = observation_time_len,
+    };
 }

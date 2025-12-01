@@ -66,13 +66,6 @@ fn runServer(allocator: std.mem.Allocator, shared: *SharedState) !void {
 
 fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) !void {
     const metrics = shared.get();
-    const altitude = relativeAltitude(metrics.pressure_hpa, shared.logger) catch |err| blk: {
-        if (shared.logger) |log| {
-            log.warn("Failed to get relative altitude: {}", .{err});
-        }
-        break :blk 0;
-    };
-
     try res.json(.{
         .timestamp_ns = metrics.timestamp_ns,
         .iaq = metrics.iaq,
@@ -84,7 +77,6 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
         .humidity_pct = metrics.humidity_pct,
         .pressure_hpa = metrics.pressure_hpa,
         .raw_pressure_hpa = metrics.raw_pressure_hpa,
-        .relative_altitude = altitude,
         .bsec_version = .{
             .major = shared.version.major,
             .minor = shared.version.minor,

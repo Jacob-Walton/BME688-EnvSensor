@@ -114,7 +114,7 @@ fn saveState(bsec_inst: *bsec.Bsec) void {
 }
 
 fn printOutputs(outputs: []bsec.SensorOutput) void {
-    const data = gatherMetrics(outputs);
+    const data = gatherMetrics(outputs, null);
 
     std.debug.print("{d:.1}C  {d:.1}%  {d:.0}hPa  IAQ:{d:.0}({s})  CO2:{d:.0}ppm  VOC:{d:.2}ppm\n", .{
         data.temperature_c,
@@ -124,7 +124,6 @@ fn printOutputs(outputs: []bsec.SensorOutput) void {
         data.accuracy_label,
         data.co2_ppm,
         data.voc_ppm,
-        data.raw_pressure_hpa,
     });
 }
 

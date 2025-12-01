@@ -1,5 +1,6 @@
 const std = @import("std");
 const i2c = @import("i2c.zig");
+const logger = @import("logger.zig");
 
 pub const c = @cImport({
     @cInclude("bme68x.h");
@@ -33,7 +34,12 @@ pub const Bme68x = struct {
         errdefer allocator.destroy(self);
 
         self.allocator = allocator;
-        self.i2c_dev = try i2c.I2c.init(i2c_bus, address);
+        self.i2c_dev = i2c.I2c.init(i2c_bus, address) catch |err| {
+            const log = logger.Logger.init(allocator, "/var/log/bme688_sensor.log") catch return err;
+            defer log.deinit();
+            log.err("Failed to initialize I2C device: {}", .{err});
+            return err;
+        };
         errdefer self.i2c_dev.deinit();
 
         self.dev = std.mem.zeroes(c.bme68x_dev);
@@ -46,6 +52,9 @@ pub const Bme68x = struct {
 
         const result = c.bme68x_init(&self.dev);
         if (result != c.BME68X_OK) {
+            const log = logger.Logger.init(allocator, "/var/log/bme688_sensor.log") catch return error.InitFailed;
+            defer log.deinit();
+            log.err("BME68x init failed: {}", .{result});
             std.debug.print("BME68x init failed: {}\n", .{result});
             return error.InitFailed;
         }

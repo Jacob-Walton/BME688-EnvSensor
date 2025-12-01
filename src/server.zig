@@ -1,6 +1,7 @@
 const std = @import("std");
 const httpz = @import("httpz");
 const Version = @import("bsec.zig").Version;
+const logger = @import("logger.zig");
 
 pub const Metrics = struct {
     timestamp_ns: i64 = 0,
@@ -39,6 +40,9 @@ pub fn start(allocator: std.mem.Allocator, shared: *SharedState) !std.Thread {
 
 fn run(allocator: std.mem.Allocator, shared: *SharedState) void {
     runServer(allocator, shared) catch |err| {
+        const log = logger.Logger.init(allocator, "/var/log/bme688_sensor.log") catch return;
+        defer log.deinit();
+        log.err("HTTP server error: {}", .{err});
         std.debug.print("HTTP server error: {}\n", .{err});
     };
 }
@@ -211,7 +215,13 @@ fn relativeAltitude(pressure_hpa: f32) !f32 {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const env = try get_api_key_from_env(allocator);
+    const log = logger.Logger.init(allocator, "/var/log/bme688_sensor.log") catch return 0;
+    defer log.deinit();
+
+    const env = get_api_key_from_env(allocator) catch |err| {
+        log.err("Failed to get API key from env: {}", .{err});
+        return error.MissingApiKey;
+    };
     defer allocator.free(env.api_key);
     defer allocator.free(env.icao);
 
@@ -229,7 +239,7 @@ fn relativeAltitude(pressure_hpa: f32) !f32 {
     const url = try std.fmt.allocPrint(allocator, "https://metar.konpeki.co.uk/api/metar/{s}", .{env.icao});
     defer allocator.free(url);
 
-    const result = try client.fetch(.{
+    const result = client.fetch(.{
         .location = .{ .url = url },
         .method = .GET,
         .redirect_buffer = &redirect_buffer,
@@ -237,9 +247,13 @@ fn relativeAltitude(pressure_hpa: f32) !f32 {
         .headers = .{
             .authorization = .{ .override = bearer },
         },
-    });
+    }) catch |err| {
+        log.err("METAR API request failed: {}", .{err});
+        return err;
+    };
 
     if (result.status != .ok) {
+        log.err("METAR API returned status: {}", .{result.status});
         std.debug.print("Request failed with status: {}\n", .{result.status});
         return error.ApiRequestFailed;
     }
@@ -248,9 +262,12 @@ fn relativeAltitude(pressure_hpa: f32) !f32 {
     defer allocator.free(response_body);
 
     // Parse the returned Json into a Metar struct
-    const parsed = try std.json.parseFromSlice(Metar, allocator, response_body, .{
+    const parsed = std.json.parseFromSlice(Metar, allocator, response_body, .{
         .ignore_unknown_fields = true,
-    });
+    }) catch |err| {
+        log.err("Failed to parse METAR response: {}", .{err});
+        return err;
+    };
     defer parsed.deinit();
 
     const qnh = parsed.value.altimeter.value;

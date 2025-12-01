@@ -3,14 +3,23 @@ const Bme68x = @import("bme68x.zig").Bme68x;
 const bsec = @import("bsec.zig");
 const bsec_config = @import("config.zig").bsec_config;
 const server = @import("server.zig");
+const logger = @import("logger.zig");
 
 const STATE_FILE = "/var/lib/bsec_state.bin";
 const SAVE_INTERVAL_NS = 5 * 60 * std.time.ns_per_s;
+const LOG_FILE = "/var/log/bme688_sensor.log";
+
+var global_logger: *logger.Logger = undefined;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
+    global_logger = try logger.Logger.init(allocator, LOG_FILE);
+    defer global_logger.deinit();
+
+    global_logger.info("BME688 Sensor application starting", .{});
 
     const sensor = try Bme68x.init(allocator, "/dev/i2c-1", 0x76);
     defer sensor.deinit();
@@ -19,6 +28,7 @@ pub fn main() !void {
     defer bsec_inst.deinit();
 
     const ver = try bsec_inst.getVersion();
+    global_logger.info("BSEC {}.{}.{}.{}", .{ ver.major, ver.minor, ver.major_bugfix, ver.minor_bugfix });
     std.debug.print("BSEC {}.{}.{}.{}\n", .{ ver.major, ver.minor, ver.major_bugfix, ver.minor_bugfix });
 
     var shared = server.SharedState{};
@@ -29,8 +39,10 @@ pub fn main() !void {
     try bsec_inst.setConfiguration(&bsec_config);
 
     if (loadState(&bsec_inst)) {
+        global_logger.info("Loaded saved state", .{});
         std.debug.print("Loaded saved state\n", .{});
     } else {
+        global_logger.info("No saved state, starting fresh", .{});
         std.debug.print("No saved state, starting fresh\n", .{});
     }
 
@@ -49,7 +61,10 @@ pub fn main() !void {
 
     while (true) {
         const timestamp_ns = std.time.nanoTimestamp();
-        const settings = try bsec_inst.sensorControl(timestamp_ns);
+        const settings = bsec_inst.sensorControl(timestamp_ns) catch |err| {
+            global_logger.err("Sensor control failed: {}", .{err});
+            continue;
+        };
         if (settings.trigger_measurement) {
             const temp_os = if (settings.temperature_oversampling == 0) @as(u8, 1) else settings.temperature_oversampling;
             const pres_os = if (settings.pressure_oversampling == 0) @as(u8, 1) else settings.pressure_oversampling;
@@ -61,11 +76,20 @@ pub fn main() !void {
                 .humidity_oversampling = hum_os,
                 .heater_temp = settings.heater_temperature,
                 .heater_duration = settings.heater_duration,
-            }) catch continue;
+            }) catch |err| {
+                global_logger.err("Sensor configure failed: {}", .{err});
+                continue;
+            };
 
-            const data = sensor.measure() catch continue;
+            const data = sensor.measure() catch |err| {
+                global_logger.err("Sensor measurement failed: {}", .{err});
+                continue;
+            };
 
-            if ((data.heat_stable == false) or (data.gas_valid == false)) continue;
+            if ((data.heat_stable == false) or (data.gas_valid == false)) {
+                global_logger.warn("Unstable measurement: heat_stable={}, gas_valid={}", .{ data.heat_stable, data.gas_valid });
+                continue;
+            }
 
             const raw_pressure_hpa = data.pressure / 100.0;
 
@@ -76,7 +100,10 @@ pub fn main() !void {
                 if (settings.shouldProcess(.pressure)) data.pressure else null,
                 if (settings.shouldProcess(.gas)) data.gas_resistance else null,
                 null,
-            ) catch continue;
+            ) catch |err| {
+                global_logger.err("BSEC do_steps failed: {}", .{err});
+                continue;
+            };
 
             printOutputs(outputs);
             updateSharedMetrics(outputs, timestamp_ns, &shared, raw_pressure_hpa);
@@ -90,26 +117,45 @@ pub fn main() !void {
 }
 
 fn loadState(bsec_inst: *bsec.Bsec) bool {
-    const file = std.fs.openFileAbsolute(STATE_FILE, .{}) catch return false;
+    const file = std.fs.openFileAbsolute(STATE_FILE, .{}) catch |err| {
+        global_logger.warn("Failed to open state file: {}", .{err});
+        return false;
+    };
     defer file.close();
 
     var buf: [bsec.MAX_STATE_BLOB_SIZE]u8 = undefined;
-    const n = file.readAll(&buf) catch return false;
+    const n = file.readAll(&buf) catch |err| {
+        global_logger.err("Failed to read state file: {}", .{err});
+        return false;
+    };
 
     if (n == 0) return false;
 
-    bsec_inst.setState(buf[0..n]) catch return false;
+    bsec_inst.setState(buf[0..n]) catch |err| {
+        global_logger.err("Failed to set BSEC state: {}", .{err});
+        return false;
+    };
     return true;
 }
 
 fn saveState(bsec_inst: *bsec.Bsec) void {
     var buf: [bsec.MAX_STATE_BLOB_SIZE]u8 = undefined;
-    const state = bsec_inst.getState(&buf) catch return;
+    const state = bsec_inst.getState(&buf) catch |err| {
+        global_logger.err("Failed to get BSEC state: {}", .{err});
+        return;
+    };
 
-    const file = std.fs.createFileAbsolute(STATE_FILE, .{}) catch return;
+    const file = std.fs.createFileAbsolute(STATE_FILE, .{}) catch |err| {
+        global_logger.err("Failed to create state file: {}", .{err});
+        return;
+    };
     defer file.close();
 
-    file.writeAll(state) catch return;
+    file.writeAll(state) catch |err| {
+        global_logger.err("Failed to write state file: {}", .{err});
+        return;
+    };
+    global_logger.info("State saved", .{});
     std.debug.print("State saved\n", .{});
 }
 

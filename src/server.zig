@@ -70,6 +70,7 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
         .temperature_c = metrics.temperature_c,
         .humidity_pct = metrics.humidity_pct,
         .pressure_hpa = metrics.pressure_hpa,
+        .raw_pressure_hpa = metrics.raw_pressure_hpa,
         .bsec_version = .{
             .major = shared.version.major,
             .minor = shared.version.minor,

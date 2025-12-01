@@ -88,12 +88,17 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
 
 fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) !void {
     const metrics = shared.get();
-    const altitude = relativeAltitude(metrics.pressure_hpa, shared.logger) catch |err| blk: {
+    const altitude = relativeAltitude(metrics.pressure_hpa, shared.logger) catch |altitude_err| {
         if (shared.logger) |log| {
-            log.warn("Failed to get relative altitude: {}", .{err});
+            log.err("Failed to get relative altitude: {}", .{altitude_err});
         }
-        break :blk 0;
+        try res.json(.{
+            .relative_altitude = 0,
+            .error_message = @errorName(altitude_err),
+        }, .{});
+        return;
     };
+
     try res.json(.{
         .relative_altitude = altitude,
     }, .{});
@@ -229,9 +234,9 @@ fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !f32 {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const env = get_api_key_from_env(allocator) catch |err| {
-        if (log) |l| l.err("Failed to get API key from env: {}", .{err});
-        return err;
+    const env = get_api_key_from_env(allocator) catch |env_err| {
+        if (log) |l| l.err("Failed to get API key from env: {}", .{env_err});
+        return env_err;
     };
     defer allocator.free(env.api_key);
     defer allocator.free(env.icao);
@@ -258,9 +263,9 @@ fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !f32 {
         .headers = .{
             .authorization = .{ .override = bearer },
         },
-    }) catch |err| {
-        if (log) |l| l.err("METAR API request failed: {}", .{err});
-        return err;
+    }) catch |fetch_err| {
+        if (log) |l| l.err("METAR API request failed: {}", .{fetch_err});
+        return fetch_err;
     };
 
     if (result.status != .ok) {
@@ -271,12 +276,11 @@ fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !f32 {
     const response_body = try body.toOwnedSlice();
     defer allocator.free(response_body);
 
-    // Parse the returned Json into a Metar struct
     const parsed = std.json.parseFromSlice(Metar, allocator, response_body, .{
         .ignore_unknown_fields = true,
-    }) catch |err| {
-        if (log) |l| l.err("Failed to parse METAR response: {}", .{err});
-        return err;
+    }) catch |parse_err| {
+        if (log) |l| l.err("Failed to parse METAR response: {}", .{parse_err});
+        return parse_err;
     };
     defer parsed.deinit();
 

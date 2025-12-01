@@ -20,8 +20,9 @@ COPY .env .env
 RUN zig build -Doptimize=ReleaseFast && \
     strip zig-out/bin/bme688_sensor
 
-# Use scratch (empty image) since we have a static binary
-FROM scratch
+# Use alpine for minimal size with networking support
+FROM alpine:latest
+RUN apk add --no-cache ca-certificates
 COPY --from=build /app/zig-out/bin/bme688_sensor /bme688_sensor
 COPY --from=build /app/public/ /public/
 COPY --from=build /app/.env /.env

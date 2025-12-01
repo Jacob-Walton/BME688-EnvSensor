@@ -196,6 +196,7 @@ fn handleStatic(_: *SharedState, req: *httpz.Request, res: *httpz.Response) !voi
     const content = try res.arena.alloc(u8, stat.size);
     const bytes_read = try file.readAll(content);
 
+    // Set content type before body
     res.content_type = contentType(file_path);
     res.body = content[0..bytes_read];
 }
@@ -204,11 +205,14 @@ fn contentType(path: []const u8) httpz.ContentType {
     const ext = std.fs.path.extension(path);
     if (ext.len < 2) return .BINARY;
 
+    // Check for .js first
+    if (std.mem.eql(u8, ext, ".js")) return .JS;
+    if (std.mem.eql(u8, ext, ".css")) return .CSS;
+    if (std.mem.eql(u8, ext, ".html")) return .HTML;
+    if (std.mem.eql(u8, ext, ".htm")) return .HTML;
+
     switch (ext.len) {
         4 => switch (ext[1]) {
-            'h' => if (std.mem.eql(u8, ext, ".htm")) return .HTML,
-            'c' => if (std.mem.eql(u8, ext, ".css")) return .CSS,
-            'j' => if (std.mem.eql(u8, ext, ".js")) return .JS,
             'p' => if (std.mem.eql(u8, ext, ".png")) return .PNG,
             'g' => if (std.mem.eql(u8, ext, ".gif")) return .GIF,
             'i' => if (std.mem.eql(u8, ext, ".ico")) return .ICO,
@@ -219,7 +223,6 @@ fn contentType(path: []const u8) httpz.ContentType {
             else => {},
         },
         5 => switch (ext[1]) {
-            'h' => if (std.mem.eql(u8, ext, ".html")) return .HTML,
             'c' => if (std.mem.eql(u8, ext, ".csv")) return .CSV,
             'j' => if (std.mem.eql(u8, ext, ".json")) return .JSON,
             'p' => if (std.mem.eql(u8, ext, ".pdf")) return .PDF,

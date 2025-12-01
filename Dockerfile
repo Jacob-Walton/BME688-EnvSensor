@@ -14,6 +14,7 @@ RUN curl -L https://ziglang.org/download/0.15.2/zig-aarch64-linux-0.15.2.tar.xz 
 ENV PATH="/opt/zig:${PATH}"
 
 COPY . .
+COPY .env .env
 
 # Build static binary with musl
 RUN zig build -Doptimize=ReleaseFast && \

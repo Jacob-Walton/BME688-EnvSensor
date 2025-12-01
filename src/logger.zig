@@ -27,10 +27,18 @@ pub const Logger = struct {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
-        const file = try std.fs.createFileAbsolute(log_path, .{
-            .truncate = false,
-            .read = true,
-        });
+        // Try to create the log file, creating directories as needed
+        const file = openOrCreateLogFile(log_path) catch |open_err| blk: {
+            // Fallback to local log file
+            std.debug.print("Warning: Cannot open {s}: {}. Using ./bme688_sensor.log instead\n", .{ log_path, open_err });
+            break :blk std.fs.cwd().createFile("bme688_sensor.log", .{
+                .truncate = false,
+                .read = true,
+            }) catch |create_err| {
+                std.debug.print("Error: Cannot create fallback log file: {}\n", .{create_err});
+                return create_err;
+            };
+        };
         errdefer file.close();
 
         try file.seekFromEnd(0);
@@ -86,6 +94,28 @@ pub const Logger = struct {
         self.log(.err, format, args);
     }
 };
+
+fn openOrCreateLogFile(log_path: []const u8) !std.fs.File {
+    // Try to open the file directly first
+    if (std.fs.openFileAbsolute(log_path, .{ .mode = .read_write })) |file| {
+        return file;
+    } else |_| {
+        // File doesn't exist, try to create it
+        // First, ensure the directory exists
+        if (std.fs.path.dirname(log_path)) |dir_path| {
+            std.fs.makeDirAbsolute(dir_path) catch |make_err| switch (make_err) {
+                error.PathAlreadyExists => {}, // Directory already exists
+                else => return make_err,
+            };
+        }
+
+        // Now try to create the file
+        return std.fs.createFileAbsolute(log_path, .{
+            .truncate = false,
+            .read = true,
+        });
+    }
+}
 
 const DateTime = struct {
     year: u16,

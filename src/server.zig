@@ -56,6 +56,7 @@ fn runServer(allocator: std.mem.Allocator, shared: *SharedState) !void {
 
     var router = try server.router(.{});
     router.get("/api/metrics", handleMetrics, .{});
+    router.get("/api/altitude", handleRelativeAltitude, .{});
     router.get("/*", handleStatic, .{});
 
     std.debug.print("HTTP server listening on port 12000\n", .{});
@@ -75,13 +76,20 @@ fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) 
         .humidity_pct = metrics.humidity_pct,
         .pressure_hpa = metrics.pressure_hpa,
         .raw_pressure_hpa = metrics.raw_pressure_hpa,
-        .relative_altitude = relativeAltitude(metrics.pressure_hpa) catch 0,
         .bsec_version = .{
             .major = shared.version.major,
             .minor = shared.version.minor,
             .major_bugfix = shared.version.major_bugfix,
             .minor_bugfix = shared.version.minor_bugfix,
         },
+    }, .{});
+}
+
+fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) !void {
+    const metrics = shared.get();
+    const altitude = relativeAltitude(metrics.pressure_hpa) catch 0;
+    try res.json(.{
+        .relative_altitude = altitude,
     }, .{});
 }
 

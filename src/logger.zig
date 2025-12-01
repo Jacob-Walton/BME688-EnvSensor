@@ -53,10 +53,11 @@ pub const Logger = struct {
         defer self.mutex.unlock();
 
         const timestamp = std.time.timestamp();
-        const writer = self.file.writer();
-
         const dt = timestampToDateTime(timestamp);
-        writer.print("[{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}] [{s}] ", .{
+
+        // Format the log message into a buffer
+        var buf: [4096]u8 = undefined;
+        const message = std.fmt.bufPrint(&buf, "[{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}] [{s}] " ++ format ++ "\n", .{
             dt.year,
             dt.month,
             dt.day,
@@ -64,10 +65,9 @@ pub const Logger = struct {
             dt.minute,
             dt.second,
             level.toString(),
-        }) catch return;
+        } ++ args) catch return;
 
-        writer.print(format, args) catch return;
-        writer.writeByte('\n') catch return;
+        _ = self.file.writeAll(message) catch return;
     }
 
     pub fn debug(self: *Self, comptime format: []const u8, args: anytype) void {
@@ -109,13 +109,14 @@ fn timestampToDateTime(timestamp: i64) DateTime {
     var days_remaining = days_since_epoch;
 
     while (true) {
-        const days_in_year = if (isLeapYear(year)) 366 else 365;
+        const days_in_year: i64 = if (isLeapYear(year)) 366 else 365;
         if (days_remaining < days_in_year) break;
         days_remaining -= days_in_year;
         year += 1;
     }
 
-    const months = [_]u8{ 31, if (isLeapYear(year)) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    const is_leap = isLeapYear(year);
+    const months = [_]u8{ 31, if (is_leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
     var month: u8 = 1;
     for (months) |days_in_month| {
         if (days_remaining < days_in_month) break;

@@ -47,7 +47,20 @@ function renderAltitude(data) {
   if (data.error_message) {
     setText('altitude', '--');
     setText('altitude-meta', 'unavailable');
+    setText('pressure-meta', 'sea level unavailable');
     return;
+  }
+
+  if (data.icao && data.observation_time) {
+    const obsDate = new Date(data.observation_time);
+    const obsTime = obsDate.toLocaleTimeString('en-GB', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      timeZone: 'UTC'
+    });
+    setText('pressure-meta', `${data.icao} ${Math.round(data.altimeter_hpa || 0)} hPa • ${obsTime}Z`);
+  } else {
+    setText('pressure-meta', `sea level ${Math.round(data.altimeter_hpa || 0)} hPa`);
   }
 
   setText('altitude', Math.round(data.relative_altitude || 0));
@@ -68,9 +81,9 @@ function renderAltitude(data) {
       timeZone: 'UTC'
     });
     
-    setText('altitude-meta', `${data.icao} obs ${obsTime}Z • upd ${updTime}Z`);
+    setText('altitude-meta', `rel to ${data.icao} • upd ${updTime}Z`);
   } else {
-    setText('altitude-meta', '');
+    setText('altitude-meta', 'relative to sea level');
   }
 }
 

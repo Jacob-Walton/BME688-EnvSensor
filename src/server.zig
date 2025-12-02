@@ -6,6 +6,7 @@ const logger = @import("logger.zig");
 var last_altitude: f32 = -1.0;
 var last_altitude_timestamp_ns: i128 = 0;
 var next_altitude_update_ns: i128 = 0;
+var last_altimeter_hpa: f32 = 0.0;
 var last_icao: [8]u8 = undefined;
 var last_icao_len: usize = 0;
 var last_metar_timestamp: [64]u8 = undefined;
@@ -117,6 +118,7 @@ const Metar = struct {
 
 const AltitudeResult = struct {
     altitude_ft: f32,
+    altimeter_hpa: f32,
     icao: [8]u8,
     icao_len: usize,
     timestamp: [64]u8,
@@ -129,6 +131,7 @@ fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.R
     if (last_altitude != -1.0 and std.time.nanoTimestamp() < next_altitude_update_ns) {
         try res.json(.{
             .relative_altitude = last_altitude,
+            .altimeter_hpa = last_altimeter_hpa,
             .icao = last_icao[0..last_icao_len],
             .updated_at = last_metar_timestamp[0..last_metar_timestamp_len],
             .observation_time = last_metar_observation_time[0..last_metar_observation_time_len],
@@ -149,6 +152,7 @@ fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.R
     };
 
     last_altitude = result.altitude_ft;
+    last_altimeter_hpa = result.altimeter_hpa;
     last_altitude_timestamp_ns = std.time.nanoTimestamp();
     next_altitude_update_ns = last_altitude_timestamp_ns + 10_000_000_000; // 10 seconds
 
@@ -162,6 +166,7 @@ fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.R
 
     try res.json(.{
         .relative_altitude = result.altitude_ft,
+        .altimeter_hpa = result.altimeter_hpa,
         .icao = last_icao[0..last_icao_len],
         .updated_at = last_metar_timestamp[0..last_metar_timestamp_len],
         .observation_time = last_metar_observation_time[0..last_metar_observation_time_len],
@@ -196,8 +201,30 @@ fn handleStatic(_: *SharedState, req: *httpz.Request, res: *httpz.Response) !voi
     const content = try res.arena.alloc(u8, stat.size);
     const bytes_read = try file.readAll(content);
 
-    // Set content type before body
-    res.content_type = contentType(file_path);
+    // Set content type
+    const ext = std.fs.path.extension(file_path);
+    if (std.mem.eql(u8, ext, ".js")) {
+        res.header("content-type", "text/javascript; charset=utf-8");
+    } else if (std.mem.eql(u8, ext, ".css")) {
+        res.header("content-type", "text/css; charset=utf-8");
+    } else if (std.mem.eql(u8, ext, ".html") or std.mem.eql(u8, ext, ".htm")) {
+        res.header("content-type", "text/html; charset=utf-8");
+    } else if (std.mem.eql(u8, ext, ".json")) {
+        res.header("content-type", "application/json; charset=utf-8");
+    } else if (std.mem.eql(u8, ext, ".png")) {
+        res.header("content-type", "image/png");
+    } else if (std.mem.eql(u8, ext, ".jpg") or std.mem.eql(u8, ext, ".jpeg")) {
+        res.header("content-type", "image/jpeg");
+    } else if (std.mem.eql(u8, ext, ".svg")) {
+        res.header("content-type", "image/svg+xml");
+    } else if (std.mem.eql(u8, ext, ".woff")) {
+        res.header("content-type", "font/woff");
+    } else if (std.mem.eql(u8, ext, ".woff2")) {
+        res.header("content-type", "font/woff2");
+    } else {
+        res.content_type = contentType(file_path);
+    }
+
     res.body = content[0..bytes_read];
 }
 
@@ -344,6 +371,7 @@ fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !AltitudeResult {
 
     return .{
         .altitude_ft = @as(f32, @floatCast(altitude_ft)),
+        .altimeter_hpa = @as(f32, @floatCast(qnh)),
         .icao = icao_buf,
         .icao_len = icao_len,
         .timestamp = timestamp_buf,

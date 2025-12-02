@@ -1,3 +1,4 @@
+# Build stage
 FROM debian:bookworm-slim AS build
 WORKDIR /app
 
@@ -13,8 +14,9 @@ RUN curl -L https://ziglang.org/download/0.15.2/zig-aarch64-linux-0.15.2.tar.xz 
 
 ENV PATH="/opt/zig:${PATH}"
 
-COPY . .
-COPY .env .env
+COPY build.zig build.zig.zon ./
+COPY src ./src
+COPY lib ./lib
 
 # Build static binary with musl
 RUN zig build -Doptimize=ReleaseFast && \
@@ -22,8 +24,11 @@ RUN zig build -Doptimize=ReleaseFast && \
 
 # Use alpine for minimal size with networking support
 FROM alpine:latest
+
 RUN apk add --no-cache ca-certificates
+
 COPY --from=build /app/zig-out/bin/bme688_sensor /bme688_sensor
-COPY --from=build /app/public/ /public/
-COPY --from=build /app/.env /.env
+COPY public/ /public/
+COPY .env /.env
+
 ENTRYPOINT ["/bme688_sensor"]

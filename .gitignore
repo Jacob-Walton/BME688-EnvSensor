@@ -3,3 +3,4 @@ zig-out/
 /bsec/
 lib/libalgobsec.a
 .env
+bme688_sensor.log

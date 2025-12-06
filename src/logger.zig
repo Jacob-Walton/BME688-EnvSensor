@@ -16,6 +16,7 @@ pub const LogLevel = enum {
     }
 };
 
+/// Thread-safe file-based logger with ISO 8601 timestamps
 pub const Logger = struct {
     file: std.fs.File,
     mutex: std.Thread.Mutex = .{},
@@ -23,6 +24,8 @@ pub const Logger = struct {
 
     const Self = @This();
 
+    /// Initialize logger, creating parent directories if needed
+    /// Falls back to ./bme688_sensor.log if absolute path fails
     pub fn init(allocator: std.mem.Allocator, log_path: []const u8) !*Self {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
@@ -126,6 +129,7 @@ const DateTime = struct {
     second: u8,
 };
 
+/// Convert Unix timestamp to broken-down date/time components
 fn timestampToDateTime(timestamp: i64) DateTime {
     const seconds_per_day = 86400;
     const days_since_epoch = @divFloor(timestamp, seconds_per_day);
@@ -166,6 +170,7 @@ fn timestampToDateTime(timestamp: i64) DateTime {
     };
 }
 
+/// Check if year is a leap year using Gregorian calendar rules
 fn isLeapYear(year: u16) bool {
     return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0);
 }

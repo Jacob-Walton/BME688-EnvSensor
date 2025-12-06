@@ -2,6 +2,7 @@ const std = @import("std");
 const i2c = @import("i2c.zig");
 const logger = @import("logger.zig");
 
+// Bosch BME688 sensor driver - provides raw temperature, pressure, humidity, and gas readings
 pub const c = @cImport({
     @cInclude("bme68x.h");
 });
@@ -22,6 +23,7 @@ pub const SensorData = struct {
     heat_stable: bool,
 };
 
+/// BME688 sensor interface - manages hardware initialization and measurements
 pub const Bme68x = struct {
     dev: c.bme68x_dev,
     i2c_dev: i2c.I2c,
@@ -29,6 +31,7 @@ pub const Bme68x = struct {
 
     const Self = @This();
 
+    /// Initialize the BME688 sensor on the specified I2C bus and address
     pub fn init(allocator: std.mem.Allocator, i2c_bus: []const u8, address: u8) !*Self {
         const self = allocator.create(Self) catch return error.OutOfMemory;
         errdefer allocator.destroy(self);
@@ -67,6 +70,7 @@ pub const Bme68x = struct {
         self.allocator.destroy(self);
     }
 
+    /// Configure sensor oversampling, filtering, and heater parameters
     pub fn configure(self: *Self, options: ConfigOptions) !void {
         var conf: c.bme68x_conf = undefined;
         var result = c.bme68x_get_conf(&conf, &self.dev);
@@ -89,6 +93,8 @@ pub const Bme68x = struct {
         if (result != c.BME68X_OK) return error.ConfigFailed;
     }
 
+    /// Acquire a single measurement from the sensor
+    /// Triggers a measurement in forced mode and waits for completion
     pub fn measure(self: *Self) !SensorData {
         var result = c.bme68x_set_op_mode(c.BME68X_FORCED_MODE, &self.dev);
         if (result != c.BME68X_OK) return error.MeasurementFailed;
@@ -96,6 +102,7 @@ pub const Bme68x = struct {
         var conf: c.bme68x_conf = undefined;
         _ = c.bme68x_get_conf(&conf, &self.dev);
         const meas_dur = c.bme68x_get_meas_dur(c.BME68X_FORCED_MODE, &conf, &self.dev);
+        // Add 100ms buffer to measurement duration to ensure data is ready
         const delay_us: u64 = @intCast(meas_dur + 100_000);
         std.Thread.sleep(delay_us * 1000);
 
@@ -124,6 +131,7 @@ pub const Bme68x = struct {
     };
 };
 
+/// C callback for I2C register reads - called by BME68x driver
 fn bme68xI2cRead(reg_addr: u8, reg_data: [*c]u8, len: u32, intf_ptr: ?*anyopaque) callconv(.c) i8 {
     const dev: *i2c.I2c = @ptrCast(@alignCast(intf_ptr orelse return -1));
     dev.write(&.{reg_addr}) catch return -1;
@@ -132,6 +140,7 @@ fn bme68xI2cRead(reg_addr: u8, reg_data: [*c]u8, len: u32, intf_ptr: ?*anyopaque
     return 0;
 }
 
+/// C callback for I2C register writes - called by BME68x driver
 fn bme68xI2cWrite(reg_addr: u8, reg_data: [*c]const u8, len: u32, intf_ptr: ?*anyopaque) callconv(.c) i8 {
     const dev: *i2c.I2c = @ptrCast(@alignCast(intf_ptr orelse return -1));
     var buf: [256]u8 = undefined;
@@ -141,6 +150,7 @@ fn bme68xI2cWrite(reg_addr: u8, reg_data: [*c]const u8, len: u32, intf_ptr: ?*an
     return 0;
 }
 
+/// C callback for microsecond delays - called by BME68x driver
 fn bme68xDelayUs(period: u32, intf_ptr: ?*anyopaque) callconv(.c) void {
     _ = intf_ptr;
     std.Thread.sleep(@as(u64, period) * 1000);

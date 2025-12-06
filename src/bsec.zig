@@ -1,12 +1,13 @@
 const std = @import("std");
 
-// Import BSEC C headers
+// BSEC (Bosch Sensortec Environmental Cluster) library C interface
+// Provides air quality and environmental sensor data fusion with machine learning
 pub const c = @cImport({
     @cInclude("bsec_interface.h");
     @cInclude("bsec_datatypes.h");
 });
 
-// Re-export common constants
+// Re-export common BSEC sample rates: LP=Low Power, ULP=Ultra Low Power, CONT=Continuous
 pub const SAMPLE_RATE_LP = c.BSEC_SAMPLE_RATE_LP;
 pub const SAMPLE_RATE_ULP = c.BSEC_SAMPLE_RATE_ULP;
 pub const SAMPLE_RATE_CONT = c.BSEC_SAMPLE_RATE_CONT;
@@ -77,6 +78,8 @@ pub const BsecError = error{
     Unknown,
 };
 
+/// Convert BSEC C library return codes to Zig error types.
+/// Most warnings are treated as success since they're non-fatal informational messages.
 fn mapBsecError(ret: c.bsec_library_return_t) BsecError!void {
     return switch (ret) {
         c.BSEC_OK => {},
@@ -213,7 +216,8 @@ pub const Bsec = struct {
         ));
     }
 
-    /// Subscribe to virtual sensor outputs
+    /// Subscribe to virtual sensor outputs at specified sample rates.
+    /// BSEC will return the required physical sensor measurements needed.
     pub fn updateSubscription(self: *Self, requested: []const struct { output: Output, sample_rate: f32 }) !void {
         var requested_sensors: [NUMBER_OUTPUTS]c.bsec_sensor_configuration_t = undefined;
         for (requested, 0..) |req, i| {
@@ -257,7 +261,8 @@ pub const Bsec = struct {
         };
     }
 
-    /// Process sensor inputs and get virtual sesnor outputs
+    /// Process physical sensor inputs through BSEC algorithm to compute virtual sensor outputs.
+    /// Returns array of SensorOutput with computed values like IAQ, CO2 equivalent, etc.
     pub fn doSteps(
         self: *Self,
         timestamp_ns: i128,
@@ -299,7 +304,7 @@ pub const Bsec = struct {
             &n_outputs,
         ));
 
-        // Convert to a more zig friendly format
+        // Convert C struct outputs to Zig-friendly format with proper error types
         const Static = struct {
             var result: [NUMBER_OUTPUTS]SensorOutput = undefined;
         };
@@ -316,7 +321,8 @@ pub const Bsec = struct {
         return Static.result[0..n_outputs];
     }
 
-    /// Save BSEc state
+    /// Save BSEC internal state (machine learning model calibration, baselines, etc.)
+    /// Returns a slice of the provided buffer containing the state data
     pub fn getState(self: *Self, buffer: []u8) ![]u8 {
         var work_buffer: [MAX_WORKBUFFER_SIZE]u8 = undefined;
         var actual_size: u32 = 0;
@@ -346,7 +352,7 @@ pub const Bsec = struct {
         ));
     }
 
-    /// Reset a specific virtual sensor output
+    /// Reset a specific virtual sensor output (e.g., clear IAQ accumulation)
     pub fn resetOutput(self: *Self, output: Output) !void {
         try mapBsecError(c.bsec_reset_output(self.instance.ptr, @intFromEnum(output)));
     }

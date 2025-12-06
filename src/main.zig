@@ -5,6 +5,7 @@ const bsec_config = @import("config.zig").bsec_config;
 const server = @import("server.zig");
 const logger = @import("logger.zig");
 
+// BSEC library state persistence
 const STATE_FILE = "/var/lib/bsec_state.bin";
 const SAVE_INTERVAL_NS = 5 * 60 * std.time.ns_per_s;
 const LOG_FILE = "/var/log/bme688_sensor.log";
@@ -61,13 +62,16 @@ pub fn main() !void {
 
     var last_save: i128 = std.time.nanoTimestamp();
 
+    // Main sensor loop: continuously acquire measurements and process them through BSEC
     while (true) {
         const timestamp_ns = std.time.nanoTimestamp();
         const settings = bsec_inst.sensorControl(timestamp_ns) catch |err| {
             global_logger.err("Sensor control failed: {}", .{err});
             continue;
         };
+
         if (settings.trigger_measurement) {
+            // Use minimum oversampling of 1x if BSEC specifies 0x (which means no oversampling)
             const temp_os = if (settings.temperature_oversampling == 0) @as(u8, 1) else settings.temperature_oversampling;
             const pres_os = if (settings.pressure_oversampling == 0) @as(u8, 1) else settings.pressure_oversampling;
             const hum_os = if (settings.humidity_oversampling == 0) @as(u8, 1) else settings.humidity_oversampling;
@@ -88,13 +92,16 @@ pub fn main() !void {
                 continue;
             };
 
+            // Skip measurements where the heater hasn't stabilized or gas sensor is invalid
             if ((data.heat_stable == false) or (data.gas_valid == false)) {
                 global_logger.warn("Unstable measurement: heat_stable={}, gas_valid={}", .{ data.heat_stable, data.gas_valid });
                 continue;
             }
 
+            // Convert raw pressure from Pa to hPa
             const raw_pressure_hpa = data.pressure / 100.0;
 
+            // Process the physical sensor readings through BSEC to compute virtual sensors (IAQ, CO2, etc.)
             const outputs = bsec_inst.doSteps(
                 timestamp_ns,
                 if (settings.shouldProcess(.temperature)) data.temperature else null,
@@ -110,6 +117,7 @@ pub fn main() !void {
             printOutputs(outputs);
             updateSharedMetrics(outputs, timestamp_ns, &shared, raw_pressure_hpa);
 
+            // Periodically save BSEC state for faster convergence on next startup
             if (timestamp_ns - last_save > SAVE_INTERVAL_NS) {
                 saveState(&bsec_inst);
                 last_save = timestamp_ns;
@@ -182,6 +190,7 @@ fn updateSharedMetrics(outputs: []bsec.SensorOutput, timestamp_ns: i128, shared:
 }
 
 fn gatherMetrics(outputs: []bsec.SensorOutput, raw_pressure_hpa: ?f32) server.Metrics {
+    // Extract relevant BSEC virtual sensor outputs from the raw output array
     var iaq: ?f32 = null;
     var iaq_acc: u8 = 0;
     var co2: ?f32 = null;
@@ -194,7 +203,7 @@ fn gatherMetrics(outputs: []bsec.SensorOutput, raw_pressure_hpa: ?f32) server.Me
         switch (out.sensor_id) {
             .iaq => {
                 iaq = out.signal;
-                iaq_acc = out.accuracy;
+                iaq_acc = out.accuracy; // Extract IAQ confidence level
             },
             .co2_equivalent => co2 = out.signal,
             .breath_voc_equivalent => voc = out.signal,
@@ -218,6 +227,7 @@ fn gatherMetrics(outputs: []bsec.SensorOutput, raw_pressure_hpa: ?f32) server.Me
     };
 }
 
+/// Map BSEC IAQ accuracy code (0-3) to human-readable label
 fn accuracyLabel(accuracy: u8) []const u8 {
     return switch (accuracy) {
         0 => "stabilizing",

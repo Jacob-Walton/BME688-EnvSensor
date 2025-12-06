@@ -3,6 +3,7 @@ const httpz = @import("httpz");
 const Version = @import("bsec.zig").Version;
 const logger = @import("logger.zig");
 
+// Cached altitude data (updated every 10 seconds from METAR API)
 var last_altitude: f32 = -1.0;
 var last_altitude_timestamp_ns: i128 = 0;
 var next_altitude_update_ns: i128 = 0;
@@ -14,19 +15,21 @@ var last_metar_timestamp_len: usize = 0;
 var last_metar_observation_time: [64]u8 = undefined;
 var last_metar_observation_time_len: usize = 0;
 
+/// Current sensor metrics from BSEC processing
 pub const Metrics = struct {
     timestamp_ns: i64 = 0,
-    iaq: f32 = 0,
-    iaq_accuracy: u8 = 0,
+    iaq: f32 = 0, // Indoor Air Quality index
+    iaq_accuracy: u8 = 0, // 0-3 confidence level
     accuracy_label: []const u8 = "stabilizing",
-    co2_ppm: f32 = 0,
-    voc_ppm: f32 = 0,
+    co2_ppm: f32 = 0, // CO2 equivalent estimate
+    voc_ppm: f32 = 0, // Volatile Organic Compounds equivalent
     temperature_c: f32 = 0,
     humidity_pct: f32 = 0,
     pressure_hpa: f32 = 0,
     raw_pressure_hpa: f32 = 0,
 };
 
+/// Thread-safe container for shared metrics and BSEC version info
 pub const SharedState = struct {
     mutex: std.Thread.Mutex = .{},
     value: Metrics = .{},
@@ -60,8 +63,9 @@ fn run(allocator: std.mem.Allocator, shared: *SharedState) void {
 }
 
 fn runServer(allocator: std.mem.Allocator, shared: *SharedState) !void {
+    const port: u16 = 9012;
     var server = try httpz.Server(*SharedState).init(allocator, .{
-        .port = 12000,
+        .port = port,
         .address = "0.0.0.0",
     }, shared);
     defer server.deinit();
@@ -71,10 +75,11 @@ fn runServer(allocator: std.mem.Allocator, shared: *SharedState) !void {
     router.get("/api/altitude", handleRelativeAltitude, .{});
     router.get("/*", handleStatic, .{});
 
-    std.debug.print("HTTP server listening on port 12000\n", .{});
+    std.debug.print("HTTP server listening on port {}\n", .{port});
     try server.listen();
 }
 
+/// HTTP handler for GET /api/metrics - returns current sensor readings
 fn handleMetrics(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) !void {
     const metrics = shared.get();
     try res.json(.{
@@ -127,7 +132,10 @@ const AltitudeResult = struct {
     observation_time_len: usize,
 };
 
+/// HTTP handler for GET /api/altitude - returns relative altitude computed from atmospheric pressure
+/// Fetches altimeter setting from METAR API, caches result for 10 seconds
 fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.Response) !void {
+    // Return cached result if available and not stale
     if (last_altitude != -1.0 and std.time.nanoTimestamp() < next_altitude_update_ns) {
         try res.json(.{
             .relative_altitude = last_altitude,
@@ -173,10 +181,11 @@ fn handleRelativeAltitude(shared: *SharedState, _: *httpz.Request, res: *httpz.R
     }, .{});
 }
 
+/// HTTP handler for static files (catch-all, serves from ./public directory)
 fn handleStatic(_: *SharedState, req: *httpz.Request, res: *httpz.Response) !void {
     const path = req.url.path;
 
-    // Prevent directory traversal
+    // Prevent directory traversal attacks by rejecting ".." sequences
     if (std.mem.indexOf(u8, path, "..") != null) {
         res.status = 403;
         res.body = "Forbidden";
@@ -262,18 +271,22 @@ fn contentType(path: []const u8) httpz.ContentType {
     return .BINARY;
 }
 
+/// Compute relative altitude from measured atmospheric pressure using barometric formula
+/// pressure_hpa: measured pressure in hPa, qnh: altimeter setting (reference pressure) in hPa
 fn get_altitude(measured: f64, qnh: f64) f64 {
     const ratio = measured / qnh;
     return 44330.0 * (1.0 - std.math.pow(f64, ratio, 0.190284));
 }
 
-fn get_api_key_from_env(allocator: std.mem.Allocator) !struct { icao: []const u8, api_key: []const u8 } {
+/// Load METAR API key/url and station ICAO code from .env file
+fn get_api_key_from_env(allocator: std.mem.Allocator) !struct { icao: []const u8, api_key: []const u8, api_url: []const u8 } {
     var file = try std.fs.cwd().openFile(".env", .{});
     defer file.close();
 
     const content = try file.readToEndAlloc(allocator, 1024 * 1024);
     defer allocator.free(content);
 
+    var api_url: ?[]const u8 = null;
     var api_key: ?[]const u8 = null;
     var icao: ?[]const u8 = null;
 
@@ -284,19 +297,39 @@ fn get_api_key_from_env(allocator: std.mem.Allocator) !struct { icao: []const u8
 
         if (std.mem.indexOf(u8, trimmed, "API_KEY=")) |_| {
             const key_start = std.mem.indexOf(u8, trimmed, "=").? + 1;
-            api_key = try allocator.dupe(u8, trimmed[key_start..]);
+            var value = trimmed[key_start..];
+            value = stripQuotes(value);
+            api_key = try allocator.dupe(u8, value);
         } else if (std.mem.indexOf(u8, trimmed, "ICAO=")) |_| {
             const key_start = std.mem.indexOf(u8, trimmed, "=").? + 1;
-            icao = try allocator.dupe(u8, trimmed[key_start..]);
+            var value = trimmed[key_start..];
+            value = stripQuotes(value);
+            icao = try allocator.dupe(u8, value);
+        } else if (std.mem.indexOf(u8, trimmed, "API_URL=")) |_| {
+            const key_start = std.mem.indexOf(u8, trimmed, "=").? + 1;
+            var value = trimmed[key_start..];
+            value = stripQuotes(value);
+            api_url = try allocator.dupe(u8, value);
         }
     }
 
+    if (api_url == null) return error.MissingApiUrl;
     if (api_key == null) return error.MissingApiKey;
     if (icao == null) return error.MissingIcao;
 
-    return .{ .icao = icao.?, .api_key = api_key.? };
+    return .{ .api_url = api_url.?, .icao = icao.?, .api_key = api_key.? };
 }
 
+/// Strip surrounding quotes from a string (handles both " and no quotes)
+fn stripQuotes(value: []const u8) []const u8 {
+    var result = value;
+    if (result.len >= 2 and result[0] == '"' and result[result.len - 1] == '"') {
+        result = result[1 .. result.len - 1];
+    }
+    return result;
+}
+
+/// Fetch current altitude using METAR API and compute relative altitude from measured pressure
 fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !AltitudeResult {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer _ = gpa.deinit();
@@ -306,6 +339,7 @@ fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !AltitudeResult {
         if (log) |l| l.err("Failed to get API key from env: {}", .{env_err});
         return env_err;
     };
+    defer allocator.free(env.api_url);
     defer allocator.free(env.api_key);
     defer allocator.free(env.icao);
 
@@ -320,7 +354,7 @@ fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !AltitudeResult {
     const bearer = try std.fmt.allocPrint(allocator, "Bearer {s}", .{env.api_key});
     defer allocator.free(bearer);
 
-    const url = try std.fmt.allocPrint(allocator, "https://metar.konpeki.co.uk/api/metar/{s}", .{env.icao});
+    const url = try std.fmt.allocPrint(allocator, "{s}/api/metar/{s}", .{ env.api_url, env.icao });
     defer allocator.free(url);
 
     const result = client.fetch(.{
@@ -356,7 +390,7 @@ fn relativeAltitude(pressure_hpa: f32, log: ?*logger.Logger) !AltitudeResult {
     const altitude = get_altitude(pressure_hpa, qnh);
     const altitude_ft = altitude * 3.28084;
 
-    // Copy strings to stack buffers before parsed.deinit()
+    // Copy response strings to static buffers - the parsed JSON will be freed after deinit()
     var icao_buf: [8]u8 = undefined;
     var timestamp_buf: [64]u8 = undefined;
     var observation_time_buf: [64]u8 = undefined;

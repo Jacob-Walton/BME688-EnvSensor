@@ -1,9 +1,13 @@
 const std = @import("std");
 
+// BSEC configuration file embedded at compile time
+// Contains machine learning model parameters and sensor calibration data
 const config_csv = @embedFile("bsec_iaq.csv");
 
+/// Parsed BSEC configuration binary blob
 pub const bsec_config = parseConfig();
 
+/// Parse CSV-formatted BSEC configuration into binary blob at compile time
 fn parseConfig() [554]u8 {
     @setEvalBranchQuota(10000);
     var result: [554]u8 = undefined;
@@ -11,7 +15,7 @@ fn parseConfig() [554]u8 {
     var num: u16 = 0;
     var in_number = false;
 
-    // Skip the first number (length prefix) and its comma
+    // Skip the first number (length prefix) which is just metadata
     var skip_first = true;
 
     for (config_csv) |char| {

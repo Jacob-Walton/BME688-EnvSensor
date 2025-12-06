@@ -174,3 +174,46 @@ fn timestampToDateTime(timestamp: i64) DateTime {
 fn isLeapYear(year: u16) bool {
     return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0);
 }
+
+// Testing
+
+test "logger: leap year calculation" {
+    try std.testing.expect(isLeapYear(2024) == true);
+    try std.testing.expect(isLeapYear(2023) == false);
+    try std.testing.expect(isLeapYear(2000) == true); // Divisible by 400
+    try std.testing.expect(isLeapYear(1900) == false); // Divisible by 100 but not 400
+}
+
+test "logger: epoch (1970-01-01 00:00:00 UTC)" {
+    const dt = timestampToDateTime(0);
+    try std.testing.expectEqual(dt.year, 1970);
+    try std.testing.expectEqual(dt.month, 1);
+    try std.testing.expectEqual(dt.day, 1);
+    try std.testing.expectEqual(dt.hour, 0);
+    try std.testing.expectEqual(dt.minute, 0);
+    try std.testing.expectEqual(dt.second, 0);
+}
+
+test "logger: timestamp with time components" {
+    const dt_next_day = timestampToDateTime(86400);
+    try std.testing.expectEqual(dt_next_day.year, 1970);
+    try std.testing.expectEqual(dt_next_day.month, 1);
+    try std.testing.expectEqual(dt_next_day.day, 2);
+
+    // Add 12 hours, 34 minutes, 56 seconds to the next day
+    const ts = 86400 + (12 * 3600) + (34 * 60) + 56;
+    const dt = timestampToDateTime(ts);
+    try std.testing.expectEqual(dt.year, 1970);
+    try std.testing.expectEqual(dt.month, 1);
+    try std.testing.expectEqual(dt.day, 2);
+    try std.testing.expectEqual(dt.hour, 12);
+    try std.testing.expectEqual(dt.minute, 34);
+    try std.testing.expectEqual(dt.second, 56);
+}
+
+test "logger: log level to string conversion" {
+    try std.testing.expectEqualStrings(LogLevel.debug.toString(), "DEBUG");
+    try std.testing.expectEqualStrings(LogLevel.info.toString(), "INFO");
+    try std.testing.expectEqualStrings(LogLevel.warn.toString(), "WARN");
+    try std.testing.expectEqualStrings(LogLevel.err.toString(), "ERROR");
+}

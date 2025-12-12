@@ -68,13 +68,30 @@ pub fn build(b: *std.Build) void {
 }
 
 /// Configure C dependencies (BSEC, BME68x driver, libc)
+/// Tries local lib/ first, falls back to pkg-config
 fn configureC(b: *std.Build, exe: *std.Build.Step.Compile) void {
-    exe.addIncludePath(b.path("lib/bsec"));
-    exe.addIncludePath(b.path("lib/bme68x"));
-    exe.addCSourceFile(.{
-        .file = b.path("lib/bme68x/bme68x.c"),
-        .flags = &.{"-std=c99"},
-    });
-    exe.addObjectFile(b.path("lib/libalgobsec.a"));
+    const local_bsec = b.path("lib/bsec");
+    const local_bme68x = b.path("lib/bme68x");
+    const local_lib = b.path("lib/libalgobsec.a");
+
+    // Check if local files exist
+    const has_local_bsec = if (std.fs.cwd().access(local_bsec.getPath(b), .{})) true else |_| false;
+    const has_local_lib = if (std.fs.cwd().access(local_lib.getPath(b), .{})) true else |_| false;
+
+    if (has_local_bsec and has_local_lib) {
+        // Use bundled libraries
+        exe.addIncludePath(local_bsec);
+        exe.addIncludePath(local_bme68x);
+        exe.addCSourceFile(.{
+            .file = b.path("lib/bme68x/bme68x.c"),
+            .flags = &.{"-std=c99"},
+        });
+        exe.addObjectFile(local_lib);
+    } else {
+        // Fallback to pkg-config / system libraries
+        exe.linkSystemLibrary("bsec");
+        exe.linkSystemLibrary("bme68x");
+    }
+
     exe.linkLibC();
 }
